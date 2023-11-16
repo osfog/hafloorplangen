@@ -1,0 +1,66 @@
+- type: light
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: light-\${entity.state}
+    tap_action: light.toggle
+- type: sensor
+  attribute:
+    device_class: temperature
+  svg_primitive: climate
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: temperature-\${entity.state}
+    tap_action: more-info
+- type: binary_sensor
+  attribute:
+    device_class: door
+  svg_primitive: door
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: door-\${entity.state}
+    tap_action: more-info
+- type: binary_sensor
+  attribute:
+    device_class: motion
+  svg_primitive: motion
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: motion-\${entity.state}
+    tap_action: more-info
+- type: binary_sensor
+  attribute:
+    device_class: smoke
+  svg_primitive: fire
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: fire-\${entity.state}
+    tap_action: more-info
+- type: binary_sensor
+  attribute:
+    device_class: moisture
+  svg_primitive: flooding
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: flooding-\${entity.state}
+    tap_action: more-info
+- type: switch
+  friendly_name_includes: bevattning
+  svg_primitive: irrigation
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: irrigation-\${entity.state}
+    tap_action: switch.toggle
