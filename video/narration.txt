@@ -1,0 +1,26 @@
+
+Creating the floor plan
+Start by creating a floor plan over your house or apartment as an SVG File.  
+There are numerous instructions on different ways to do that. 
+In the end the floor plan needs to be an svg file. Note however that you may possibly 
+embedd bitmaps such as jpg or pngs into the svg file but it is perhaps not the best idea.
+
+Perhaps the easiest way is to base your floor plan on the one found in the examples folder.
+
+Add symbols for how you want your sensors and actuators to be visualized. 
+It is important that the symbols are named correctly
+
+When you are happy with your floor plan and symbols it is time to set up the rules.
+Again the simplest approach is to have a look in the example rules files. 
+
+
+
+No we are set to generate the contents. make sure that the floor plan is saved. 
+
+Open a command line terminal in the project folder and run node floorplangen.js 
+and provide the required inforamation 
+
+When running the script found enteties are listed which can be helpful information. 
+
+Note that you can run the script on a file where the entities have been positioned if 
+for instance a new sensor is added or moved
