@@ -1,3 +1,13 @@
+- entity_id: light.flakt
+  type: fan
+  svg_primitive: fan
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: fan-\${entity.state}
+    tap_action: light.toggle
+  
 - type: light
   rules:
     state_action:
@@ -55,6 +65,14 @@
       service: floorplan.class_set
       service_data: flooding-\${entity.state}
     tap_action: more-info
+- type: fan
+  svg_primitive: fan
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: fan-\${entity.state}
+    tap_action: fan.toggle
 - type: switch
   friendly_name_includes: bevattning
   svg_primitive: irrigation

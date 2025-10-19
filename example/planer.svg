@@ -26,13 +26,13 @@
    showgrid="false"
    inkscape:zoom="0.457453"
    inkscape:cx="323.5305"
-   inkscape:cy="459.06355"
+   inkscape:cy="456.87754"
    inkscape:window-width="1854"
    inkscape:window-height="1011"
    inkscape:window-x="66"
    inkscape:window-y="32"
    inkscape:window-maximized="1"
-   inkscape:current-layer="svg5"
+   inkscape:current-layer="layer10"
    showborder="false"
    borderlayer="false" /><defs
    id="defs2"><clipPath
@@ -1462,6 +1462,9 @@
      inkscape:label="floorplan.irrigation" /></g>
          
         <g
+   inkscape:groupmode="layer"
+   id="layer11"
+   inkscape:label="fan" /><g
    inkscape:groupmode="layer"
    id="layer4"
    inkscape:label="climate">

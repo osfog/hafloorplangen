@@ -10,6 +10,7 @@ const yaml = require('js-yaml');
 const libxml = require('libxmljs2');
 const commandLineArgs = require('command-line-args');
 const commandLineUsage = require('command-line-usage');
+const { execSync } = require('child_process');
 
 const header = `                                                    
 _____  _____  _____  _                 _____  _            _____           
@@ -22,6 +23,7 @@ const namespaces = {
   inkscape: 'http://www.inkscape.org/namespaces/inkscape',
   sodipodi: 'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd',
   svg: 'http://www.w3.org/2000/svg',
+  hafloorplan: 'http://www.example.com/hafloorplan',
 };
 
 const optionDefinitions = [
@@ -84,13 +86,18 @@ let cmdOptions;
 try {
   cmdOptions = commandLineArgs(optionDefinitions);
 } catch {
-
   // noop
 }
 
-let allSet = (cmdOptions == true);
+let allSet = cmdOptions == true;
 
-if (cmdOptions && cmdOptions.svg && cmdOptions.rules && cmdOptions.url && cmdOptions.token) {
+if (
+  cmdOptions
+  && cmdOptions.svg
+  && cmdOptions.rules
+  && cmdOptions.url
+  && cmdOptions.token
+) {
   allSet = true;
 } else {
   console.log(chalk.red('All command line options are required.'));
@@ -159,7 +166,6 @@ if (!allSet || cmdOptions.help) {
     console.error('Invalid protocol');
   }
 
-
   const protocol = q.protocol === 'http:' ? http : https;
   const requestOptions = {
     path: '/api/states',
@@ -183,12 +189,21 @@ if (!allSet || cmdOptions.help) {
 
     // The whole response has been received
     resp.on('end', () => {
-      entities = JSON.parse(data);
+      try {
+        entities = JSON.parse(data);
+      } catch (err) {
+        console.error(
+          'Error parsing JSON from Home Assistant. Ensure url and token are correct:',
+          err.message,
+        );
+        return;
+      }
       const entityIDs = entities.map((e) => e.entity_id);
 
       console.info(`Received: ${entities.length} entities`);
 
       // iterate the types that there we want rules for
+      let handledEntities = [];
 
       for (const rule of rules) {
         const svgPrimitive = rule.svg_primitive || rule.type;
@@ -215,34 +230,56 @@ if (!allSet || cmdOptions.help) {
             'inkscape:label': svgPrimitive,
           });
         }
+        let ruleEntities = [];
 
         // filter entities
-        let ruleEntities = entityIDs.filter((e) => e.split('.')[0] === rule.type);
+        if (rule.entity_id) {
+          if (!entityIDs.includes(rule.entity_id)) {
+            console.warn(
+              `Entity ${rule.entity_id} not found in Home Assistant`,
+            );
+          } else {
+            ruleEntities = [rule.entity_id];
+          }
+        } else {
+          ruleEntities = entityIDs.filter(
+            (e) => e.split('.')[0] === rule.type,
+          );
 
-        // filter by attribute
-        if (rule.attribute) {
-          ruleEntities = ruleEntities.filter(
-            (e) => entities.find((ee) => ee.entity_id === e).attributes
-              .device_class === rule.attribute.device_class,
+          // filter by attribute
+          if (rule.attribute) {
+            ruleEntities = ruleEntities.filter(
+              (e) => entities.find((ee) => ee.entity_id === e).attributes
+                .device_class === rule.attribute.device_class,
+            );
+          }
+
+          // filter by friendly name
+          if (rule.friendly_name_includes) {
+            ruleEntities = ruleEntities.filter((e) => entities
+              .find((ee) => ee.entity_id === e)
+              .attributes.friendly_name.toLowerCase()
+              .includes(rule.friendly_name_includes));
+          }
+
+          console.info(
+            `Found ${ruleEntities.length} entities of type ${
+              rule.type
+            }, attribute ${
+              rule.attribute ? JSON.stringify(rule.attribute) : '<none>'
+            }, friendly_name_includes: ${
+              rule.friendly_name_includes
+                ? rule.friendly_name_includes
+                : '<none>'
+            }`,
           );
         }
 
-        // filter by friendly name
-        if (rule.friendly_name_includes) {
-          ruleEntities = ruleEntities.filter((e) => entities
-            .find((ee) => ee.entity_id === e)
-            .attributes.friendly_name.toLowerCase()
-            .includes(rule.friendly_name_includes));
-        }
+        // filter already handled entities
+        ruleEntities = ruleEntities.filter((e) => !handledEntities.includes(e));
 
-        console.info(
-          `Found ${ruleEntities.length} entities of type ${rule.type
-          }, attribute ${rule.attribute ? JSON.stringify(rule.attribute) : '<none>'
-          }, friendly_name_includes: ${rule.friendly_name_includes
-            ? rule.friendly_name_includes
-            : '<none>'
-          }`,
-        );
+        // add the found entities to a list to ensure they are included just onece
+        handledEntities = handledEntities.concat(ruleEntities);
 
         // Generate the rule part
         rule.rules.entities = ruleEntities;
@@ -272,14 +309,50 @@ if (!allSet || cmdOptions.help) {
         ruleEntities.forEach((e) => {
           if (!svgDoc.get(`//*[@id='${e}']`)) {
             layerSVGElement.addChild(
-              svgSnippet.clone().attr({ id: e, 'inkscape:label': e }),
+              svgSnippet
+                .clone()
+                .attr({ id: e, 'inkscape:label': e, 'hafloorplan:entity': e }),
             );
             console.info(`Entity ${e} has been added to SVG`);
           } else {
-            console.info(`Entity ${e} already exists in SVG`);
+            // console.info(`Entity ${e} already exists in SVG`);
           }
         });
       }
+
+      // go through svg snippets not in the entities and warn
+      const existingEntitiesInSVG = svgDoc.find(
+        '//*[@hafloorplan:entity_id]',
+        namespaces,
+      );
+      if (existingEntitiesInSVG) {
+        existingEntitiesInSVG.forEach((el) => {
+          const entityID = el.attr('entity_id').value();
+          if (!entityIDs.includes(entityID)) {
+            console.info(
+              `Entity ${entityID} in SVG no longer in Home Assistant do you want to remove it?`,
+            );
+            try {
+              const cmd = `sh -c 'read -p "Remove entity ${entityID} from SVG? (y/N): " ans; echo "$ans"'`;
+              const answer = execSync(cmd, { stdio: ['inherit', 'pipe', 'inherit'] })
+                .toString()
+                .trim()
+                .toLowerCase();
+              if (answer === 'y' || answer === 'yes') {
+                try {
+                  el.remove();
+                  console.info(`Entity ${entityID} removed from SVG`);
+                } catch (removeErr) {
+                  console.error(`Failed to remove ${entityID}:`, removeErr.message);
+                }
+              }
+            } catch (err) {
+              console.error('Interactive prompt failed (possibly non-Unix shell); skipping removal.');
+            }
+          }
+        });
+      }
+
       fs.writeFileSync(svgFileName, svgDoc.toString());
       fs.writeFileSync(
         `${__dirname}/ha_rules.yml`,
@@ -292,6 +365,8 @@ if (!allSet || cmdOptions.help) {
 
   req.on('error', (e) => {
     console.error(
-      'Failed to get entities - please ensure that Home Assistant server is available and that the long lived token is correct.', e);
+      'Failed to get entities - please ensure that Home Assistant server is available and that the long lived token is correct.',
+      e,
+    );
   });
 }

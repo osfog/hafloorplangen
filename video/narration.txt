@@ -1,26 +1,31 @@
 
-Creating the floor plan
-Start by creating a floor plan over your house or apartment as an SVG File.  
-There are numerous instructions on different ways to do that. 
-In the end the floor plan needs to be an svg file. Note however that you may possibly 
-embedd bitmaps such as jpg or pngs into the svg file but it is perhaps not the best idea.
+Getting Started with Your Floor Plan and Rule Set
 
-Perhaps the easiest way is to base your floor plan on the one found in the examples folder.
+The purpose of the HA Floor Plan Generator is to automate the creation of symbols in home assistant floor plans, eliminating the need for much of the manual work in the SVG content.
 
-Add symbols for how you want your sensors and actuators to be visualized. 
-It is important that the symbols are named correctly
+This is a Node.js application, so you will need to have Node.js installed on your computer. You can obtain the tool by either cloning the Git repository or downloading it as a ZIP file from GitHub. There are many online resources available for installation instructions for Git, as well as for Node.js and NPM, which you will need to manage the package dependencies for this tool.
 
-When you are happy with your floor plan and symbols it is time to set up the rules.
-Again the simplest approach is to have a look in the example rules files. 
+You will also need an SVG editor. I recommend Inkscape, as it is a good free option, although there are other editors available as well.
 
+It's assumed that you have already set up a floor plan using Home Assistant's Floor Plan feature. You should have this up and running, as the tool is designed to automate the generation of symbols when you add or modify your setup. I developed this tool because I have several entities that I want to visualize.
+If you have already set up a floor plan then then you know how to upload floor plan SVG files, and CSS files to your server. 
 
+You will need a long-lived access token to retrieve entities. The tool queries your Home Assistant server to obtain all the entities and populates the SVG file accordingly. To generate a long-lived token, log into your Home Assistant account, navigate to your user profile page, go to the security tab, and create a token at the bottom. The name of the token is arbitrary, but be sure to copy and store the token value in a safe place, as we will need it later when running the script.
 
-No we are set to generate the contents. make sure that the floor plan is saved. 
+In the example folder there is a sample floor plan and various symbols that have been set up for motion detection, leak detection, temperature sensors, lights, door sensors, and more. While there are reference symbols included, the idea is for you to replace and add to these with symbols of your own. You can place the reference symbols  anywhere, but it's good practice to position them under the reference layer. The symbols must be named with the  prefix "floorplan" dot.  You can choose either the type of device you're visualizing or a name of your choice. More on this in the rules section later on, but consistent naming with the "floorplan"  prefix is important.
 
-Open a command line terminal in the project folder and run node floorplangen.js 
-and provide the required inforamation 
+It's also advisable to organize your layers based on the types of sensors and their visualizations. When you run the script, it will go through the rules and identify entities that correspond to specific types, creating symbols for each of those entities. For example, if you have flood sensors, the script will populate them accordingly.
 
-When running the script found enteties are listed which can be helpful information. 
+The script filters the entities from your Home Assistant setup using a rule set. An example of a few such filter rules can be found in the "rules.yaml"  found in the examples folder.
 
-Note that you can run the script on a file where the entities have been positioned if 
-for instance a new sensor is added or moved
+Let’s take a look at that file to explain how entities are filtered. There are various methods for filtering entities. One way is to filter by type, such as "light," which will capture all light instances in your system. 
+You can also filter based on attributes. For instance, we can filter for all sensors with the attribute "device_class: temperature." Additionally, you can filter by friendly name, which allows for more detailed queries.
+
+In the filter  the "rules" field  corresponds directly to the rules in the Home Assistant floor plan. 
+Once your filters are set up, you can run the H A Floor Plan Generator with the required command-line parameters: the SVG file, the rules file, the URL to your Home Assistant server, and the long-lived token. When you run the script, it updates the SVG file with the entities found that match your specified rules. For example, my server has 1,000 entities, and 65 of those matched the filter for lights and were added to the SVG file.
+
+Now, when you return to the SVG file and select "revert," the file is re read from the file system.  While it may appear that not much has changed visually, the layers have now been populated with corresponding entities, allowing you to select and move them to your desired locations. The SVG file is backed up before any changes, so you always have access to the version prior to the update.
+
+You can  run the script on the same SVG file again and again. If you’ve added new sensors in your Home Assistant setup, rerunning the script won’t alter the positions of symbols you’ve already placed. But, it will add any new sensors or actuators to the file so you can position them correctly.
+
+The script also generates the Home Assistant floor plan rules, which you can integrate into your Home Assistant floor plan. You’ll have the corresponding state actions and any other actions defined in your rules file. Simply select, copy, and paste this content into your floor plan to update it. That’s how it works!
