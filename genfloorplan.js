@@ -353,11 +353,28 @@ if (!allSet || cmdOptions.help) {
         });
       }
 
+      // rules file name
+      const rulesFileName = `${__dirname}/ha_rules.yml`;
+
       fs.writeFileSync(svgFileName, svgDoc.toString());
       fs.writeFileSync(
-        `${__dirname}/ha_rules.yml`,
+        rulesFileName,
         yaml.dump(haFloorplanRules, { lineWidth: 1000 }),
       );
+
+      // Reopen the SVG and replace occurrences of "\{" with "{"
+      try {
+        const rulesContent = fs.readFileSync(rulesFileName, 'utf8');
+        const updatedContent = rulesContent.replace(/\\\${/g, '${');
+        if (updatedContent !== rulesContent) {
+          fs.writeFileSync(rulesFileName, updatedContent, 'utf8');
+          console.info('Replaced "\\${" with "${" in rules file');
+        } else {
+          console.info('No "\\${" sequences found in rules file');
+        }
+      } catch (err) {
+        console.error('Error reopening or modifying rules file:', err.message);
+      }
     });
   });
 

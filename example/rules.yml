@@ -1,3 +1,23 @@
+- entity_id: switch.elradiator_brytare
+  type: heaater
+  svg_primitive: heater
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: heater-\${entity.state}
+    tap_action: switch.toggle
+
+- entity_id: switch.bt_vevor_ble_5e3af8_varmare_pa_av
+  type: heaater
+  svg_primitive: heater
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: heater-\${entity.state}
+    tap_action: switch.toggle
+ 
 - entity_id: light.flakt
   type: fan
   svg_primitive: fan
