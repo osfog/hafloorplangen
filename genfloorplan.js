@@ -2,12 +2,12 @@
 /* eslint-disable no-loop-func */
 /* eslint-disable no-console */
 const chalk = require('chalk');
-const url = require('node:url');
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const yaml = require('js-yaml');
-const libxml = require('libxmljs2');
+const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
+const xpath = require('xpath');
 const commandLineArgs = require('command-line-args');
 const commandLineUsage = require('command-line-usage');
 const { execSync } = require('child_process');
@@ -24,6 +24,21 @@ const namespaces = {
   sodipodi: 'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd',
   svg: 'http://www.w3.org/2000/svg',
   hafloorplan: 'http://www.example.com/hafloorplan',
+};
+
+const select = xpath.useNamespaces(namespaces);
+
+// set attributes, resolving prefixed names (e.g. inkscape:label) to their namespace
+const setAttributes = (el, attrs) => {
+  Object.entries(attrs).forEach(([name, value]) => {
+    const prefix = name.includes(':') ? name.split(':')[0] : null;
+    if (prefix && namespaces[prefix]) {
+      el.setAttributeNS(namespaces[prefix], name, value);
+    } else {
+      el.setAttribute(name, value);
+    }
+  });
+  return el;
 };
 
 const optionDefinitions = [
@@ -89,7 +104,7 @@ try {
   // noop
 }
 
-let allSet = cmdOptions == true;
+let allSet = false;
 
 if (
   cmdOptions
@@ -142,8 +157,16 @@ if (!allSet || cmdOptions.help) {
   fs.copyFileSync(svgFileName, `${svgFileName}.${randomString(6)}.bak`);
 
   // read svg file
-  const xmlFile = fs.readFileSync(svgFileName, 'utf8');
-  const svgDoc = libxml.parseXmlString(xmlFile);
+  let xmlFile = fs.readFileSync(svgFileName, 'utf8');
+  // declare the hafloorplan namespace on the root, files written by earlier
+  // versions used the prefix without declaring it which fails to parse
+  if (!xmlFile.includes('xmlns:hafloorplan=')) {
+    xmlFile = xmlFile.replace(
+      /<svg(\s|>)/,
+      `<svg xmlns:hafloorplan="${namespaces.hafloorplan}"$1`,
+    );
+  }
+  const svgDoc = new DOMParser().parseFromString(xmlFile, 'text/xml');
 
   // read rules file
   const rulesFile = fs.readFileSync(cmdOptions.rules[0], 'utf8');
@@ -155,22 +178,26 @@ if (!allSet || cmdOptions.help) {
     console.error(`Error in rules: ${err.message}`);
   }
 
-  const q = url.parse(cmdOptions.url, true);
+  let q;
   // test if the url is valid
-  if (!q.hostname) {
-    console.error('Invalid URL');
+  try {
+    q = new URL(cmdOptions.url);
+  } catch {
+    console.error(`Invalid URL: ${cmdOptions.url}`);
+    process.exit(1);
   }
 
   // test if the protocol is http or https
   if (q.protocol !== 'http:' && q.protocol !== 'https:') {
-    console.error('Invalid protocol');
+    console.error(`Invalid protocol: ${q.protocol}`);
+    process.exit(1);
   }
 
   const protocol = q.protocol === 'http:' ? http : https;
   const requestOptions = {
     path: '/api/states',
     host: q.hostname,
-    port: q.port,
+    port: q.port || undefined,
     method: 'GET',
     headers: {
       Authorization: `Bearer ${cmdOptions.token}`,
@@ -207,9 +234,10 @@ if (!allSet || cmdOptions.help) {
 
       for (const rule of rules) {
         const svgPrimitive = rule.svg_primitive || rule.type;
-        let layerSVGElement = svgDoc.get(
+        let layerSVGElement = select(
           `//*[@inkscape:label='${svgPrimitive}']`,
-          namespaces,
+          svgDoc,
+          true,
         );
 
         // validate yaml
@@ -222,9 +250,11 @@ if (!allSet || cmdOptions.help) {
         }
 
         if (!layerSVGElement) {
-          console.info(`Layer ${rule.type} does not exist - creating it`);
-          layerSVGElement = svgDoc.root().node('g');
-          layerSVGElement.attr({
+          console.info(`Layer ${svgPrimitive} does not exist - creating it`);
+          layerSVGElement = svgDoc.documentElement.appendChild(
+            svgDoc.createElementNS(namespaces.svg, 'g'),
+          );
+          setAttributes(layerSVGElement, {
             'inkscape:groupmode': 'layer',
             id: `layer_${svgPrimitive}`,
             'inkscape:label': svgPrimitive,
@@ -262,6 +292,14 @@ if (!allSet || cmdOptions.help) {
               .includes(rule.friendly_name_includes));
           }
 
+          // filter by entity name includes
+          if (rule.entity_id_includes) {
+            ruleEntities = ruleEntities.filter((e) => entities
+              .find((ee) => ee.entity_id === e)
+              .entity_id.toLowerCase()
+              .includes(rule.entity_id_includes));
+          }
+
           console.info(
             `Found ${ruleEntities.length} entities of type ${
               rule.type
@@ -271,6 +309,10 @@ if (!allSet || cmdOptions.help) {
               rule.friendly_name_includes
                 ? rule.friendly_name_includes
                 : '<none>'
+            },entity_id includes: ${
+              rule.entity_id_includes
+                ? rule.entity_id_includes
+                : '<none>'
             }`,
           );
         }
@@ -278,22 +320,22 @@ if (!allSet || cmdOptions.help) {
         // filter already handled entities
         ruleEntities = ruleEntities.filter((e) => !handledEntities.includes(e));
 
-        // add the found entities to a list to ensure they are included just onece
+        // add the found entities to a list to ensure they are included just once
         handledEntities = handledEntities.concat(ruleEntities);
 
         // Generate the rule part
         rule.rules.entities = ruleEntities;
         haFloorplanRules.push(rule.rules);
 
-        let svgSnippets = svgDoc.find(
+        let svgSnippets = select(
           `//*[@inkscape:label='floorplan.${svgPrimitive}']`,
-          namespaces,
+          svgDoc,
         );
 
         if (!svgSnippets || svgSnippets.length === 0) {
-          svgSnippets = svgDoc.find(
+          svgSnippets = select(
             `//*[@id='floorplan.${svgPrimitive}']`,
-            namespaces,
+            svgDoc,
           );
         }
 
@@ -301,17 +343,22 @@ if (!allSet || cmdOptions.help) {
           console.warn('More than one svg snippet found');
         }
         if (svgSnippets.length === 0) {
-          console.error(`No svg snippet for ${rule.type} found`);
+          console.error(
+            `No svg snippet for ${rule.type} found (expected an element with inkscape:label or id 'floorplan.${svgPrimitive}') - not adding its entities to the SVG`,
+          );
         }
 
         const svgSnippet = svgSnippets[0];
         // Generate the svg part
         ruleEntities.forEach((e) => {
-          if (!svgDoc.get(`//*[@id='${e}']`)) {
-            layerSVGElement.addChild(
-              svgSnippet
-                .clone()
-                .attr({ id: e, 'inkscape:label': e, 'hafloorplan:entity': e }),
+          if (!svgSnippet) return;
+          if (!select(`//*[@id='${e}']`, svgDoc, true)) {
+            layerSVGElement.appendChild(
+              setAttributes(svgSnippet.cloneNode(true), {
+                id: e,
+                'inkscape:label': e,
+                'hafloorplan:entity': e,
+              }),
             );
             console.info(`Entity ${e} has been added to SVG`);
           } else {
@@ -321,13 +368,13 @@ if (!allSet || cmdOptions.help) {
       }
 
       // go through svg snippets not in the entities and warn
-      const existingEntitiesInSVG = svgDoc.find(
-        '//*[@hafloorplan:entity_id]',
-        namespaces,
+      const existingEntitiesInSVG = select(
+        '//*[@hafloorplan:entity]',
+        svgDoc,
       );
       if (existingEntitiesInSVG) {
         existingEntitiesInSVG.forEach((el) => {
-          const entityID = el.attr('entity_id').value();
+          const entityID = el.getAttributeNS(namespaces.hafloorplan, 'entity');
           if (!entityIDs.includes(entityID)) {
             console.info(
               `Entity ${entityID} in SVG no longer in Home Assistant do you want to remove it?`,
@@ -340,7 +387,7 @@ if (!allSet || cmdOptions.help) {
                 .toLowerCase();
               if (answer === 'y' || answer === 'yes') {
                 try {
-                  el.remove();
+                  el.parentNode.removeChild(el);
                   console.info(`Entity ${entityID} removed from SVG`);
                 } catch (removeErr) {
                   console.error(`Failed to remove ${entityID}:`, removeErr.message);
@@ -356,7 +403,7 @@ if (!allSet || cmdOptions.help) {
       // rules file name
       const rulesFileName = `${__dirname}/ha_rules.yml`;
 
-      fs.writeFileSync(svgFileName, svgDoc.toString());
+      fs.writeFileSync(svgFileName, new XMLSerializer().serializeToString(svgDoc));
       fs.writeFileSync(
         rulesFileName,
         yaml.dump(haFloorplanRules, { lineWidth: 1000 }),

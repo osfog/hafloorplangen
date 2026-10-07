@@ -8,7 +8,7 @@
       service_data: heater-\${entity.state}
     tap_action: switch.toggle
 
-- entity_id: switch.bt_vevor_ble_5e3af8_varmare_pa_av
+- entity_id: switch.kontoret_orangerivarmare_varmare_pa_av
   type: heaater
   svg_primitive: heater
   rules:
@@ -95,6 +95,15 @@
     tap_action: fan.toggle
 - type: switch
   friendly_name_includes: bevattning
+  svg_primitive: irrigation
+  rules:
+    state_action:
+      action: call-service
+      service: floorplan.class_set
+      service_data: irrigation-\${entity.state}
+    tap_action: switch.toggle
+- type: switch
+  entity_id_includes: bevattning
   svg_primitive: irrigation
   rules:
     state_action:
