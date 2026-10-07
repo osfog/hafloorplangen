@@ -1,4 +1,22 @@
 {
+  "name": "hafloorplangen",
+  "version": "1.0.0",
+  "description": "Populates Home Assistant floorplan SVG files with entities and generates ha-floorplan rules",
+  "main": "genfloorplan.js",
+  "bin": {
+    "hafloorplangen": "genfloorplan.js"
+  },
+  "scripts": {
+    "start": "node genfloorplan.js",
+    "lint": "eslint genfloorplan.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/osfog/hafloorplangen"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.12",
     "chalk": "^4.1.2",

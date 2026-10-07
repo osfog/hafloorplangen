@@ -1,5 +1,5 @@
 - entity_id: switch.elradiator_brytare
-  type: heaater
+  type: switch
   svg_primitive: heater
   rules:
     state_action:
@@ -9,7 +9,7 @@
     tap_action: switch.toggle
 
 - entity_id: switch.kontoret_orangerivarmare_varmare_pa_av
-  type: heaater
+  type: switch
   svg_primitive: heater
   rules:
     state_action:
