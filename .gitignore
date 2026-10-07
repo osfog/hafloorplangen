@@ -1,5 +1,6 @@
 
 *.bak
+*.bak.json
 ha_rules.yml
 .vscode/
 

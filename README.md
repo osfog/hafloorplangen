@@ -27,6 +27,7 @@ node genfloorplan.js -s <svg file> -r <rules file> -u <home assistant url> -t <t
 | `--rules` | `-r` | The rules file describing which entities to add (see [Rules](#rules)) |
 | `--url` | `-u` | Url to your Home Assistant server, e.g. `http://homeassistant.local:8123` |
 | `--token` | `-t` | A Home Assistant [long lived access token](https://www.home-assistant.io/docs/authentication/#your-account-profile), created at the bottom of the security tab of your user profile |
+| `--card` | `-c` | Optional. Also write the generated rules into the floorplan card in your dashboard (see [Updating the dashboard](#updating-the-dashboard)) |
 | `--help` | `-h` | Show the help |
 
 Example using the files in the `example` folder:
@@ -42,6 +43,16 @@ When it runs, the tool:
 3. Offers to remove symbols it added earlier whose entity no longer exists in Home Assistant.
 4. Saves the SVG, first backing up the original as `<svg file>.<random>.bak`. If nothing changed, the SVG is left as it is.
 5. Writes the generated floorplan rules to `ha_rules.yml` in the application folder. Copy these into your ha-floorplan configuration.
+
+## Updating the dashboard
+
+With `--card`, the tool also connects to the Home Assistant WebSocket API, searches every dashboard for `custom:floorplan-card` cards (also inside sections, stacks and other nested cards) and replaces the card's `rules` with the generated ones, so you don't have to copy `ha_rules.yml` by hand.
+
+- The card whose `image` has the same file name as the SVG is used. If there is only one floorplan card, it is used whatever its image.
+- You are asked before the card is changed, and the dashboard config is first backed up as `lovelace_<dashboard>.<random>.bak.json` in the application folder.
+- All rules in the card are replaced, so keep any hand written rules in the rules file.
+- Dashboards in YAML mode, and cards that load their config from a separate file, can't be changed this way.
+- The token must belong to an administrator, and Node.js 22 or later is needed.
 
 If the SVG is open in Inkscape, use *File → Revert* to load the updated version.
 

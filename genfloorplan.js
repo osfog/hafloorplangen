@@ -14,6 +14,9 @@
  *  3. The rule's 'rules' block, with the matched entities, is added to
  *     ha_rules.yml for pasting into the ha-floorplan configuration.
  *
+ * With --card the generated rules are also written straight into the
+ * floorplan card of a Home Assistant dashboard, over the WebSocket API.
+ *
  * See README.md for the rules file format.
  */
 const chalk = require('chalk');
@@ -35,6 +38,8 @@ _____  _____  _____  _                 _____  _            _____
 
 // generated rules are written next to this script
 const RULES_OUTPUT_FILE = path.join(__dirname, 'ha_rules.yml');
+
+const FLOORPLAN_CARD_TYPE = 'custom:floorplan-card';
 
 const namespaces = {
   inkscape: 'http://www.inkscape.org/namespaces/inkscape',
@@ -76,6 +81,12 @@ const optionDefinitions = [
     typeLabel: '<token>',
   },
   {
+    name: 'card',
+    alias: 'c',
+    type: Boolean,
+    description: 'Also write the generated rules into the floorplan card of the Home Assistant dashboard',
+  },
+  {
     name: 'help',
     alias: 'h',
     type: Boolean,
@@ -112,6 +123,20 @@ const setAttributes = (el, attrs) => {
   return el;
 };
 
+// replace \${ with ${ in every string, rules may escape ha-floorplan templates
+const unescapeTemplates = (value) => {
+  if (typeof value === 'string') {
+    return value.replace(/\\\$\{/g, '${');
+  }
+  if (Array.isArray(value)) {
+    return value.map(unescapeTemplates);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unescapeTemplates(v)]));
+  }
+  return value;
+};
+
 // ask a yes/no question on the terminal, defaults to no
 const confirm = (question) => {
   try {
@@ -141,7 +166,7 @@ const printUsage = () => {
       content: `Adds a symbol to the SVG for each Home Assistant entity matching the rules,
         and generates the corresponding ha-floorplan rules.
 
-        - All options except --help are required.
+        - All options except --card and --help are required.
 
         - Example SVG and rules files are available in the example folder.
 
@@ -149,6 +174,10 @@ const printUsage = () => {
 
         - Generated rules, to be included in the ha-floorplan configuration, are
           written to ha_rules.yml in the application folder.
+
+        - With --card the rules also replace the rules of the floorplan card in
+          the Home Assistant dashboard, after confirmation. The dashboard config
+          is backed up (lovelace_<dashboard>.<random>.bak.json) first.
         `,
     },
     {
@@ -245,8 +274,7 @@ const readSvg = (fileName) => {
   }
 };
 
-// fetch the state of all entities from the Home Assistant REST API
-const fetchEntities = async (serverUrl, token) => {
+const parseServerUrl = (serverUrl) => {
   let baseUrl;
   try {
     baseUrl = new URL(serverUrl.endsWith('/') ? serverUrl : `${serverUrl}/`);
@@ -256,7 +284,11 @@ const fetchEntities = async (serverUrl, token) => {
   if (baseUrl.protocol !== 'http:' && baseUrl.protocol !== 'https:') {
     throw new UserError(`Invalid protocol ${baseUrl.protocol}, use http or https`);
   }
+  return baseUrl;
+};
 
+// fetch the state of all entities from the Home Assistant REST API
+const fetchEntities = async (baseUrl, token) => {
   console.log('Fetching entities from Home Assistant');
   let response;
   try {
@@ -285,6 +317,164 @@ const fetchEntities = async (serverUrl, token) => {
     throw new UserError('Unexpected response from Home Assistant, check the url');
   }
   return entities;
+};
+
+// connect and authenticate to the Home Assistant WebSocket API, resolves to
+// { call, close } where call(type, data) sends a command and resolves to its result
+const connectWebSocket = (baseUrl, token) => new Promise((resolve, reject) => {
+  if (typeof WebSocket === 'undefined') {
+    reject(new UserError('--card needs Node.js 22 or later (built-in WebSocket)'));
+    return;
+  }
+  const wsUrl = new URL('api/websocket', baseUrl);
+  wsUrl.protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+
+  const ws = new WebSocket(wsUrl);
+  const pending = new Map();
+  let nextId = 1;
+
+  const call = (type, data = {}) => new Promise((res, rej) => {
+    const id = nextId;
+    nextId += 1;
+    pending.set(id, { res, rej });
+    ws.send(JSON.stringify({ id, type, ...data }));
+  });
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'auth_required') {
+      ws.send(JSON.stringify({ type: 'auth', access_token: token }));
+    } else if (msg.type === 'auth_ok') {
+      resolve({ call, close: () => ws.close() });
+    } else if (msg.type === 'auth_invalid') {
+      reject(new UserError('Home Assistant rejected the token on the WebSocket API, check the long lived token'));
+      ws.close();
+    } else if (msg.type === 'result' && pending.has(msg.id)) {
+      const { res, rej } = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.success) {
+        res(msg.result);
+      } else {
+        rej(Object.assign(new Error(msg.error.message), { code: msg.error.code }));
+      }
+    }
+  };
+  ws.onerror = () => {
+    reject(new UserError(`Could not connect to the Home Assistant WebSocket API at ${wsUrl}`));
+  };
+  ws.onclose = () => {
+    reject(new UserError('Home Assistant closed the WebSocket connection'));
+    pending.forEach(({ rej }) => rej(new UserError('Home Assistant closed the WebSocket connection')));
+    pending.clear();
+  };
+});
+
+// the config of every dashboard, auto generated dashboards have none and are skipped
+const fetchDashboards = async (ha) => {
+  const dashboards = [{ url_path: null, title: 'Overview (default)', mode: 'storage' }];
+  dashboards.push(...await ha.call('lovelace/dashboards/list'));
+
+  const result = [];
+  await Promise.all(dashboards.map(async (dashboard) => {
+    try {
+      const config = await ha.call('lovelace/config', { url_path: dashboard.url_path });
+      result.push({ ...dashboard, config });
+    } catch (err) {
+      if (err.code !== 'config_not_found') {
+        console.warn(chalk.yellow(`Could not read dashboard ${dashboard.title}: ${err.message}`));
+      }
+    }
+  }));
+  return result;
+};
+
+// all floorplan cards in a dashboard config, wherever they are nested
+// (views, sections, stacks, conditional cards...), with a readable location
+const findFloorplanCards = (node, location, found = []) => {
+  if (Array.isArray(node)) {
+    node.forEach((child, i) => findFloorplanCards(child, `${location}[${i}]`, found));
+  } else if (node && typeof node === 'object') {
+    if (node.type === FLOORPLAN_CARD_TYPE) {
+      found.push({ card: node, location });
+    }
+    Object.entries(node).forEach(([key, child]) => {
+      const name = key === 'views' || key === 'sections' || key === 'cards' || key === 'card'
+        ? `${location} > ${key}`
+        : `${location}.${key}`;
+      if (child && typeof child === 'object') {
+        findFloorplanCards(child, name, found);
+      }
+    });
+  }
+  return found;
+};
+
+// the floorplan card to update: the one showing the SVG file, or the only one
+const selectFloorplanCard = (cards, svgFileName) => {
+  const svgName = path.basename(svgFileName);
+  const showingSvg = cards.filter(({ card }) => card.config && typeof card.config === 'object'
+    && typeof card.config.image === 'string'
+    && path.basename(card.config.image.split('?')[0]) === svgName);
+
+  if (showingSvg.length === 1) {
+    return showingSvg[0];
+  }
+  if (showingSvg.length === 0 && cards.length === 1) {
+    return cards[0];
+  }
+  const describe = (list) => list
+    .map(({ dashboard, location, card }) => `  ${dashboard.title}: ${location} (image: ${card.config && card.config.image})`)
+    .join('\n');
+  if (showingSvg.length > 1) {
+    throw new UserError(`More than one floorplan card shows ${svgName}, not updating any:\n${describe(showingSvg)}`);
+  }
+  throw new UserError(`No floorplan card shows ${svgName}, not updating any. Found:\n${describe(cards)}`);
+};
+
+// replace the rules of the dashboard's floorplan card with the generated rules
+const updateFloorplanCard = async (baseUrl, token, svgFileName, haFloorplanRules) => {
+  console.log('Searching Home Assistant dashboards for floorplan cards');
+  const ha = await connectWebSocket(baseUrl, token);
+  try {
+    const dashboards = await fetchDashboards(ha);
+    const cards = dashboards.flatMap((d) => findFloorplanCards(d.config, d.title)
+      .map((found) => ({ ...found, dashboard: d })));
+    if (cards.length === 0) {
+      throw new UserError(`No ${FLOORPLAN_CARD_TYPE} found in any dashboard`);
+    }
+    console.info(`Found ${cards.length} floorplan card(s)`);
+
+    const { card, dashboard, location } = selectFloorplanCard(cards, svgFileName);
+    if (!card.config || typeof card.config !== 'object') {
+      throw new UserError(`The floorplan card at ${location} keeps its config in a separate file (${card.config}), update it with ${RULES_OUTPUT_FILE} by hand`);
+    }
+    if (dashboard.mode === 'yaml') {
+      throw new UserError(`Dashboard ${dashboard.title} is in YAML mode and can't be changed from here, update it with ${RULES_OUTPUT_FILE} by hand`);
+    }
+
+    const oldCount = Array.isArray(card.config.rules) ? card.config.rules.length : 0;
+    console.info(`Floorplan card: ${location} (image: ${card.config.image})`);
+    if (!confirm(`Replace its ${oldCount} rule(s) with the ${haFloorplanRules.length} generated rule(s)?`)) {
+      console.info('Floorplan card not updated');
+      return;
+    }
+
+    const backupFileName = path.join(
+      __dirname,
+      `lovelace_${dashboard.url_path || 'default'}.${randomString(6)}.bak.json`,
+    );
+    fs.writeFileSync(backupFileName, JSON.stringify(dashboard.config, null, 2));
+
+    // the card object is part of dashboard.config, so this updates the whole config
+    card.config.rules = haFloorplanRules;
+    await ha.call('lovelace/config/save', { url_path: dashboard.url_path, config: dashboard.config });
+    console.info(chalk.green(`Floorplan card updated, previous dashboard config saved as ${backupFileName}`));
+  } catch (err) {
+    if (err instanceof UserError) throw err;
+    throw new UserError(`Could not update the floorplan card: ${err.message}`);
+  } finally {
+    ha.close();
+  }
 };
 
 /** ************** Processing *********************** */
@@ -423,7 +613,8 @@ const main = async () => {
 
   const rules = readRules(options.rules);
   const svgDoc = readSvg(svgFileName);
-  const entities = await fetchEntities(options.url, options.token);
+  const baseUrl = parseServerUrl(options.url);
+  const entities = await fetchEntities(baseUrl, options.token);
   console.info(`Received: ${entities.length} entities`);
 
   // an entity is only included by the first rule matching it
@@ -437,7 +628,7 @@ const main = async () => {
     ruleEntities.forEach((e) => handledEntities.add(e));
     console.info(`Found ${ruleEntities.length} entities for ${describeRule(rule)}`);
 
-    haFloorplanRules.push({ ...rule.rules, entities: ruleEntities });
+    haFloorplanRules.push({ ...unescapeTemplates(rule.rules), entities: ruleEntities });
     svgChanges += addEntitiesToSvg(svgDoc, svgPrimitive, ruleEntities);
   });
 
@@ -452,10 +643,12 @@ const main = async () => {
     console.info('SVG already up to date, not modified');
   }
 
-  // rules may write \${...} for ha-floorplan templates, unescape them in the output
-  const rulesYaml = yaml.dump(haFloorplanRules, { lineWidth: 1000 }).replace(/\\\$\{/g, '${');
-  fs.writeFileSync(RULES_OUTPUT_FILE, rulesYaml);
+  fs.writeFileSync(RULES_OUTPUT_FILE, yaml.dump(haFloorplanRules, { lineWidth: 1000 }));
   console.info(`Rules written to ${RULES_OUTPUT_FILE}`);
+
+  if (options.card) {
+    await updateFloorplanCard(baseUrl, options.token, svgFileName, haFloorplanRules);
+  }
   return 0;
 };
 
