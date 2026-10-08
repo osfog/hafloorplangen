@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node genfloorplan.js",
-    "lint": "eslint genfloorplan.js"
+    "lint": "eslint genfloorplan.js exportboundary.js"
   },
   "repository": {
     "type": "git",

@@ -99,3 +99,23 @@ Rules are applied in order, and an entity is only included by the first rule tha
 Templates like `${entity.state}` can also be written as `\${entity.state}`, as in the example file. The backslash is removed in `ha_rules.yml`.
 
 See `example/rules.yml` for a complete example.
+
+## Exporting the house as a plain SVG
+
+`exportboundary.js` exports everything inside a boundary object as a plain SVG, cropped to the boundary, e.g. to use only the house part of the drawing in a dashboard:
+
+```sh
+node exportboundary.js -s <svg file> -o <output file>
+```
+
+| Option | Alias | Description |
+| --- | --- | --- |
+| `--svg` | `-s` | The floorplan SVG file to export from |
+| `--out` | `-o` | The plain SVG file to write |
+| `--boundary` | `-b` | Optional. Label or id of the boundary object, default `HouseBoundry` |
+| `--include-boundary` | `-i` | Optional. Also include the boundary object itself in the export |
+
+- Draw the boundary, for example a rectangle, around the area to export and label it `HouseBoundry` in the *Layers and Objects* panel.
+- Every visible object whose bounding box is completely inside the boundary is exported. Groups that are only partly inside are searched for the objects in them that are. Hidden layers and objects are left out.
+- Inkscape specific data is removed, but ids are kept so the entity symbols still work with ha-floorplan.
+- Inkscape 1.x must be installed, it is used to measure the objects and to write the plain SVG.
