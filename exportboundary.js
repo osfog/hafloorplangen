@@ -182,6 +182,15 @@ const queryBoundingBoxes = (fileName) => {
 
 const elementChildren = (el) => Array.from(el.childNodes).filter((n) => n.nodeType === 1);
 
+const isAncestorOf = (el, node) => {
+  for (let n = node.parentNode; n; n = n.parentNode) {
+    if (n === el) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const isHidden = (el) => el.getAttribute('display') === 'none'
   || /(^|;)\s*display\s*:\s*none/.test(el.getAttribute('style') || '');
 
@@ -219,11 +228,14 @@ const pruneOutside = (parent, boundary, boxes) => {
       // the boundary is needed to crop the page, it is removed after export
       return;
     }
-    if (!isHidden(el) && isInside(el)) {
+    // the groups holding the boundary are kept even when nothing else in
+    // them is, or the boundary would be removed with them
+    const holdsBoundary = isAncestorOf(el, boundary);
+    if (!holdsBoundary && !isHidden(el) && isInside(el)) {
       kept += 1;
-    } else if (GROUP_TAGS.has(tag) && !isHidden(el)) {
+    } else if (holdsBoundary || (GROUP_TAGS.has(tag) && !isHidden(el))) {
       const keptInGroup = pruneOutside(el, boundary, boxes);
-      if (keptInGroup > 0) {
+      if (keptInGroup > 0 || holdsBoundary) {
         kept += keptInGroup;
       } else {
         parent.removeChild(el);
@@ -292,6 +304,9 @@ const main = () => {
     // and crops the page to the boundary
     const exportFile = path.join(workDir, 'export.svg');
     runInkscape([workFile, `--export-id=${boundaryId}`, '--export-plain-svg', '--export-type=svg', '-o', exportFile]);
+    if (!fs.existsSync(exportFile)) {
+      throw new UserError('Inkscape did not write the exported SVG');
+    }
 
     const exportDoc = readSvg(exportFile);
     cleanExport(exportDoc, boundaryId, options['include-boundary']);
