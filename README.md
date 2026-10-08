@@ -114,8 +114,25 @@ node exportboundary.js -s <svg file> -o <output file>
 | `--out` | `-o` | The plain SVG file to write |
 | `--boundary` | `-b` | Optional. Label or id of the boundary object, default `HouseBoundry` |
 | `--include-boundary` | `-i` | Optional. Also include the boundary object itself in the export |
+| `--card` | `-c` | Optional. Also embed the plain SVG as the image of the floorplan card in your dashboard (see below) |
+| `--url` | `-u` | Url to your Home Assistant server, needed with `--card` |
+| `--token` | `-t` | A Home Assistant long lived access token, needed with `--card` |
 
 - Draw the boundary, for example a rectangle, around the area to export and label it `HouseBoundry` in the *Layers and Objects* panel.
 - Every visible object whose bounding box is completely inside the boundary is exported. Groups that are only partly inside are searched for the objects in them that are. Hidden layers and objects are left out.
 - Inkscape specific data is removed, but ids are kept so the entity symbols still work with ha-floorplan.
 - Inkscape 1.x must be installed, it is used to measure the objects and to write the plain SVG.
+
+### Embedding the SVG in the dashboard
+
+With `--card`, the plain SVG is stored in the floorplan card itself, as a `data:` url in the card's `image`, so the file doesn't have to be copied to the `www` folder of Home Assistant. Together with `genfloorplan.js --card`, only the url and a long lived access token are needed to update the dashboard:
+
+```sh
+node genfloorplan.js -s planer.svg -r rules.yml -u http://homeassistant.local:8123 -t <token> --card
+node exportboundary.js -s planer.svg -o house.svg -u http://homeassistant.local:8123 -t <token> --card
+```
+
+- The card is found the same way as with `genfloorplan.js --card`, by the file name of the output SVG or as the only floorplan card. You are asked before it is changed, and the dashboard config is first backed up.
+- The card's `image` is replaced with `{ location: <data url>, cache: true }`. Caching must be on, since ha-floorplan otherwise adds a query to the url which breaks the data url.
+- The SVG is sent with the dashboard config every time the dashboard is loaded, so keep it reasonably small. A warning is shown above 1 MB.
+- The card's `stylesheet` is not changed.

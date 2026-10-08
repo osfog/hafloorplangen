@@ -15,23 +15,24 @@
  *  3. Inkscape crops the page to the boundary and writes a plain SVG, without
  *     Inkscape specific data. Element ids are kept, ha-floorplan uses them.
  *
+ * With --card the plain SVG is also embedded in the floorplan card of a Home
+ * Assistant dashboard as a data url, so no file has to be copied to the
+ * server, only a long lived access token is needed.
+ *
  * Needs Inkscape 1.x on the PATH.
  */
 const chalk = require('chalk');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
+const { XMLSerializer } = require('@xmldom/xmldom');
 const xpath = require('xpath');
 const commandLineArgs = require('command-line-args');
 const commandLineUsage = require('command-line-usage');
 const { execFileSync } = require('child_process');
-
-const namespaces = {
-  inkscape: 'http://www.inkscape.org/namespaces/inkscape',
-  svg: 'http://www.w3.org/2000/svg',
-  hafloorplan: 'http://www.example.com/hafloorplan',
-};
+const {
+  namespaces, UserError, readSvg, parseServerUrl, updateFloorplanCard,
+} = require('./common');
 
 const select = xpath.useNamespaces(namespaces);
 
@@ -80,6 +81,26 @@ const optionDefinitions = [
     description: 'Also include the boundary object itself in the export',
   },
   {
+    name: 'url',
+    alias: 'u',
+    type: String,
+    description: 'The url to the Home Assistant server, needed with --card',
+    typeLabel: '<url>',
+  },
+  {
+    name: 'token',
+    alias: 't',
+    type: String,
+    description: 'Long lived access token for the Home Assistant server, needed with --card',
+    typeLabel: '<token>',
+  },
+  {
+    name: 'card',
+    alias: 'c',
+    type: Boolean,
+    description: 'Also embed the plain SVG as the image of the floorplan card of the Home Assistant dashboard',
+  },
+  {
     name: 'help',
     alias: 'h',
     type: Boolean,
@@ -87,9 +108,6 @@ const optionDefinitions = [
   },
 ];
 const requiredOptions = ['svg', 'out'];
-
-// errors caused by bad input, printed without a stack trace
-class UserError extends Error {}
 
 const printUsage = () => {
   console.log(commandLineUsage([
@@ -99,7 +117,8 @@ const printUsage = () => {
 
         - The boundary is found by its Inkscape label, or else its id.
         - Hidden elements are left out.
-        - Inkscape must be installed.`,
+        - Inkscape must be installed.
+        - With --card the SVG is embedded in the dashboard's floorplan card, the dashboard config is backed up first.`,
     },
     {
       header: 'Options',
@@ -107,7 +126,7 @@ const printUsage = () => {
     },
     {
       header: 'Example',
-      content: 'node exportboundary.js -s planer.svg -o house.svg',
+      content: 'node exportboundary.js -s planer.svg -o house.svg -u http://homeassistant.local:8123 -t <token> --card',
     },
   ]));
 };
@@ -123,34 +142,13 @@ const parseCommandLine = () => {
   if (options.help) {
     return options;
   }
-  const missing = requiredOptions.filter((name) => !options[name]);
+  const required = options.card ? [...requiredOptions, 'url', 'token'] : requiredOptions;
+  const missing = required.filter((name) => !options[name]);
   if (missing.length > 0) {
     console.log(chalk.red(`Missing required options: ${missing.map((m) => `--${m}`).join(', ')}`));
     return null;
   }
   return options;
-};
-
-const readSvg = (fileName) => {
-  let xmlFile;
-  try {
-    xmlFile = fs.readFileSync(fileName, 'utf8');
-  } catch (err) {
-    throw new UserError(`Could not read SVG file ${fileName}: ${err.message}`);
-  }
-  // files written by early versions of genfloorplan.js use the hafloorplan
-  // prefix without declaring it, which fails to parse
-  if (!xmlFile.includes('xmlns:hafloorplan=')) {
-    xmlFile = xmlFile.replace(
-      /<svg(\s|>)/,
-      `<svg xmlns:hafloorplan="${namespaces.hafloorplan}"$1`,
-    );
-  }
-  try {
-    return new DOMParser().parseFromString(xmlFile, 'text/xml');
-  } catch (err) {
-    throw new UserError(`Could not parse SVG file ${fileName}: ${err.message}`);
-  }
 };
 
 const runInkscape = (args) => {
@@ -269,7 +267,29 @@ const cleanExport = (svgDoc, boundaryId, includeBoundary) => {
   });
 };
 
-const main = () => {
+// the SVG as a data url, named so ha-floorplan sees an .svg image and the
+// card can be found by the file name again
+const svgDataUrl = (fileName) => `data:image/svg+xml;name=${encodeURIComponent(path.basename(fileName))};base64,${
+  fs.readFileSync(fileName).toString('base64')}`;
+
+// embed the exported SVG as the image of the dashboard's floorplan card
+const embedInCard = async (options) => {
+  const baseUrl = parseServerUrl(options.url);
+  const location = svgDataUrl(options.out);
+  const sizeKb = Math.round(location.length / 1024);
+  if (sizeKb > 1024) {
+    console.warn(chalk.yellow(`The embedded SVG is ${sizeKb} KB, which makes the dashboard slow to load`));
+  }
+  await updateFloorplanCard(baseUrl, options.token, options.out, {
+    question: () => `Replace its image with ${path.basename(options.out)} (${sizeKb} KB, embedded in the card)?`,
+    // ha-floorplan adds a cache busting query to the url when cache is false,
+    // which would corrupt the data url
+    update: (cardConfig) => { Object.assign(cardConfig, { image: { location, cache: true } }); },
+    manualHint: `copy ${options.out} to the www folder of Home Assistant by hand`,
+  });
+};
+
+const main = async () => {
   const options = parseCommandLine();
   if (!options || options.help) {
     printUsage();
@@ -315,12 +335,16 @@ const main = () => {
     fs.rmSync(workDir, { recursive: true, force: true });
   }
   console.info(`Plain SVG written to ${options.out}`);
+
+  if (options.card) {
+    await embedInCard(options);
+  }
   return 0;
 };
 
-try {
-  process.exitCode = main();
-} catch (err) {
-  console.error(chalk.red(err instanceof UserError ? err.message : err.stack));
-  process.exitCode = 1;
-}
+main()
+  .then((code) => { process.exitCode = code; })
+  .catch((err) => {
+    console.error(chalk.red(err instanceof UserError ? err.message : err.stack));
+    process.exitCode = 1;
+  });
